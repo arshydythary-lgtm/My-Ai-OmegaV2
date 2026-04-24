@@ -1,11 +1,10 @@
-# chat.py - واجهة Streamlit احترافية للمحادثة مع model_optimized.py
+# chat.py - Streamlit Chat Interface
 import os
 import torch
 import streamlit as st
 from datetime import datetime
 from typing import Optional, List, Dict
 import time
-import inspect  # <--- إضافة لفحص دوال النموذج
 
 from model_optimized import OptimizedMiniLLM
 from memory import Memory
@@ -36,13 +35,11 @@ DEFAULT_GEN_CONFIG = {
 
 # معاملات النموذج المحسّن
 DEFAULT_MODEL_CONFIG = {
-    "d_model": 512,
-    "n_heads": 8,
-    "num_layers": 6,
+    "d_model": 1024,
+    "n_heads": 16,
+    "num_layers": 16,
     "max_seq_len": 512,
-    "use_lora": True,
-    "lora_r": 8,
-    "use_gradient_checkpoint": True,
+    "use_gradient_checkpoint": False,
     "use_flash_attn": True,
     "dropout": 0.1,
 }
@@ -149,7 +146,7 @@ def load_model(_tokenizer):
 
         if best_model_path:
             state_dict = torch.load(best_model_path, map_location=DEVICE)
-            model.load_state_dict(state_dict)
+            model.load_state_dict(state_dict, strict=False)
             model_name = os.path.basename(best_model_path)
             st.success(f"✅ Model: {model_name}")
         else:
@@ -160,12 +157,12 @@ def load_model(_tokenizer):
 
         # عرض معلومات التحسينات
         optimizations = []
-        if model_config.get("use_lora"):
-            optimizations.append(f"LoRA (r={model_config.get('lora_r', 8)})")
         if model_config.get("use_gradient_checkpoint"):
             optimizations.append("Grad Checkpoint")
         if model_config.get("use_flash_attn"):
             optimizations.append("Flash Attention")
+        if model_config.get("use_lora", True):
+            optimizations.append("LoRA")
 
         total_params = model.get_total_params_count()
         trainable_params = model.get_trainable_params_count()
@@ -206,6 +203,7 @@ def generate_response(
 
         # بناء معاملات التوليد الأساسية
         gen_kwargs = {
+            "input_ids": input_tensor,
             "max_new_tokens": config["max_gen_len"],
             "temperature": config["temperature"],
             "top_k": config["top_k"],
@@ -213,19 +211,9 @@ def generate_response(
             "device": DEVICE
         }
 
-        # التحقق مما إذا كان النموذج يدعم repetition_penalty
-        sig = inspect.signature(model.generate)
-        if "repetition_penalty" in sig.parameters:
-            gen_kwargs["repetition_penalty"] = config["repetition_penalty"]
-        else:
-            # تحذير لمرة واحدة فقط في الجلسة
-            if not st.session_state.get("_warned_repetition_penalty", False):
-                st.warning("⚠️ النموذج الحالي لا يدعم 'repetition_penalty' (سيتم تجاهل القيمة).")
-                st.session_state._warned_repetition_penalty = True
-
         # التوليد
         with torch.no_grad():
-            generated = model.generate(input_tensor, **gen_kwargs)
+            generated = model.generate(**gen_kwargs)
 
         # فك الترميز
         response_ids = generated[0].tolist()

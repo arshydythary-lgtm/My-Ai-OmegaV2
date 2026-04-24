@@ -1,4 +1,4 @@
-# train.py - برنامج التدريب المحسّن والموثوق
+# train.py - برنامج التدريب المحسن والموثوق
 import os
 import torch
 import torch.nn as nn
@@ -14,7 +14,7 @@ import gc
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 
-from model import MiniLLM
+from model_optimized import OptimizedMiniLLM
 from tokenizer import MyTokenizer
 from memory import Memory
 from brain import Brain
@@ -301,17 +301,21 @@ val_loader = DataLoader(
 # 6. بناء النموذج
 # ============================================================
 print("🤖 بناء النموذج...")
-model = MiniLLM(
+model = OptimizedMiniLLM(
     vocab_size=vocab_size,
     d_model=args.d_model,
     n_heads=args.n_heads,
     num_layers=args.num_layers,
     max_seq_len=args.block_size,
+    use_lora=True,
+    lora_r=8,
+    use_gradient_checkpoint=False,
+    use_flash_attn=True,
     dropout=args.dropout
 ).to(device)
 
-total_params = sum(p.numel() for p in model.parameters())
-trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+total_params = model.get_total_params_count()
+trainable_params = model.get_trainable_params_count()
 
 print(f"✅ النموذج:")
 print(f"   إجمالي المعاملات: {total_params:,}")
@@ -565,7 +569,21 @@ for epoch in range(start_epoch, args.epochs):
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
         best_model_path = os.path.join(args.checkpoint_dir, "best_model.pth")
-        torch.save(model.state_dict(), best_model_path)
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'config': {
+                'vocab_size': vocab_size,
+                'd_model': args.d_model,
+                'n_heads': args.n_heads,
+                'num_layers': args.num_layers,
+                'max_seq_len': args.block_size,
+                'dropout': args.dropout,
+                'use_lora': True,
+                'lora_r': 8,
+                'use_gradient_checkpoint': False,
+                'use_flash_attn': True,
+            }
+        }, best_model_path)
         early_stop_counter = 0
         print(f"   ✅ أفضل نموذج محفوظ! (loss: {best_val_loss:.4f})")
     else:
@@ -592,13 +610,31 @@ for epoch in range(start_epoch, args.epochs):
             'num_layers': args.num_layers,
             'max_seq_len': args.block_size,
             'dropout': args.dropout,
+            'use_lora': True,
+            'lora_r': 8,
+            'use_gradient_checkpoint': False,
+            'use_flash_attn': True,
         }
     }, latest_ckpt_path)
 
     # حفظ checkpoint دوري
     if (epoch + 1) % 10 == 0:
         periodic_path = os.path.join(args.checkpoint_dir, f"checkpoint_epoch{epoch + 1}.pth")
-        torch.save(model.state_dict(), periodic_path)
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'config': {
+                'vocab_size': vocab_size,
+                'd_model': args.d_model,
+                'n_heads': args.n_heads,
+                'num_layers': args.num_layers,
+                'max_seq_len': args.block_size,
+                'dropout': args.dropout,
+                'use_lora': True,
+                'lora_r': 8,
+                'use_gradient_checkpoint': False,
+                'use_flash_attn': True,
+            }
+        }, periodic_path)
 
     # تنظيف الذاكرة
     if device == "cuda":
@@ -614,7 +650,21 @@ print("\n✅ اكتمل التدريب بنجاح!")
 
 # حفظ النموذج النهائي
 final_model_path = os.path.join(args.checkpoint_dir, "final_model.pth")
-torch.save(model.state_dict(), final_model_path)
+torch.save({
+    'model_state_dict': model.state_dict(),
+    'config': {
+        'vocab_size': vocab_size,
+        'd_model': args.d_model,
+        'n_heads': args.n_heads,
+        'num_layers': args.num_layers,
+        'max_seq_len': args.block_size,
+        'dropout': args.dropout,
+        'use_lora': True,
+        'lora_r': 8,
+        'use_gradient_checkpoint': False,
+        'use_flash_attn': True,
+    }
+}, final_model_path)
 print(f"💾 النموذج النهائي: {final_model_path}")
 
 # حفظ الـ tokenizer
