@@ -1,0 +1,255 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "<pad>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1,
+      "content": "<unk>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 2,
+      "content": "<bos>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 3,
+      "content": "<eos>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": null,
+  "pre_tokenizer": {
+    "type": "Whitespace"
+  },
+  "post_processor": {
+    "type": "TemplateProcessing",
+    "single": [
+      {
+        "SpecialToken": {
+          "id": "<bos>",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "SpecialToken": {
+          "id": "<eos>",
+          "type_id": 0
+        }
+      }
+    ],
+    "pair": [
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "B",
+          "type_id": 1
+        }
+      }
+    ],
+    "special_tokens": {
+      "<bos>": {
+        "id": "<bos>",
+        "ids": [
+          2
+        ],
+        "tokens": [
+          "<bos>"
+        ]
+      },
+      "<eos>": {
+        "id": "<eos>",
+        "ids": [
+          3
+        ],
+        "tokens": [
+          "<eos>"
+        ]
+      }
+    }
+  },
+  "decoder": {
+    "type": "BPEDecoder",
+    "suffix": "</w>"
+  },
+  "model": {
+    "type": "BPE",
+    "dropout": null,
+    "unk_token": "<unk>",
+    "continuing_subword_prefix": null,
+    "end_of_word_suffix": null,
+    "fuse_unk": false,
+    "byte_fallback": false,
+    "ignore_merges": false,
+    "vocab": {
+      "<pad>": 0,
+      "<unk>": 1,
+      "<bos>": 2,
+      "<eos>": 3,
+      "ا": 4,
+      "ت": 5,
+      "د": 6,
+      "س": 7,
+      "ع": 8,
+      "ف": 9,
+      "ق": 10,
+      "ك": 11,
+      "ل": 12,
+      "م": 13,
+      "ن": 14,
+      "ه": 15,
+      "و": 16,
+      "ي": 17,
+      "مي": 18,
+      "اس": 19,
+      "اع": 20,
+      "اه": 21,
+      "او": 22,
+      "تك": 23,
+      "دتك": 24,
+      "ساع": 25,
+      "قا": 26,
+      "كك": 27,
+      "كي": 28,
+      "لا": 29,
+      "مساع": 30,
+      "مكك": 31,
+      "ني": 32,
+      "يمكك": 33,
+      "ميقا": 34,
+      "اسمي": 35,
+      "اهلا": 36,
+      "اوميقا": 37,
+      "كيف": 38,
+      "مساعدتك": 39,
+      "يمككني": 40
+    },
+    "merges": [
+      [
+        "م",
+        "ي"
+      ],
+      [
+        "ا",
+        "س"
+      ],
+      [
+        "ا",
+        "ع"
+      ],
+      [
+        "ا",
+        "ه"
+      ],
+      [
+        "ا",
+        "و"
+      ],
+      [
+        "ت",
+        "ك"
+      ],
+      [
+        "د",
+        "تك"
+      ],
+      [
+        "س",
+        "اع"
+      ],
+      [
+        "ق",
+        "ا"
+      ],
+      [
+        "ك",
+        "ك"
+      ],
+      [
+        "ك",
+        "ي"
+      ],
+      [
+        "ل",
+        "ا"
+      ],
+      [
+        "م",
+        "ساع"
+      ],
+      [
+        "م",
+        "كك"
+      ],
+      [
+        "ن",
+        "ي"
+      ],
+      [
+        "ي",
+        "مكك"
+      ],
+      [
+        "مي",
+        "قا"
+      ],
+      [
+        "اس",
+        "مي"
+      ],
+      [
+        "اه",
+        "لا"
+      ],
+      [
+        "او",
+        "ميقا"
+      ],
+      [
+        "كي",
+        "ف"
+      ],
+      [
+        "مساع",
+        "دتك"
+      ],
+      [
+        "يمكك",
+        "ني"
+      ]
+    ]
+  }
+}
