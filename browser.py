@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-متصفح مطور بالكامل - Arch Linux
-يتطلب: pip install PyQt6 PyQt6-WebEngine PyQt6-Qt6 
-أو: yay -S python-pyqt6 python-pyqt6-webengine
+متصفح سريع وخفيف - إصدار محسّن
+الأولوية: السرعة، الأداء، استهلاك رام منخفض
 """
 
 import sys
 import os
 import json
 import re
-import zipfile
-import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -18,48 +15,26 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QLineEdit, QPushButton, QToolBar, QStatusBar,
     QMenu, QDialog, QListWidget, QLabel, QFileDialog, QMessageBox,
-    QProgressBar, QSplitter, QTreeWidget, QTreeWidgetItem, QCheckBox,
-    QSlider, QComboBox, QTextEdit, QGroupBox, QScrollArea, QFrame,
-    QListWidgetItem, QInputDialog, QSystemTrayIcon, QStyle
+    QProgressBar, QCheckBox, QSlider, QComboBox, QTextEdit, 
+    QGroupBox, QScrollArea, QListWidgetItem, QInputDialog,
+    QColorDialog, QFormLayout, QSpinBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (
-    QWebEngineProfile, QWebEnginePage, QWebEngineScript,
-    QWebEngineUrlRequestInterceptor, QWebEngineDownloadRequest,
-    QWebEngineSettings
+    QWebEngineProfile, QWebEnginePage, QWebEngineUrlRequestInterceptor,
+    QWebEngineDownloadRequest, QWebEngineSettings
 )
-from PyQt6.QtCore import (
-    QUrl, Qt, QThread, pyqtSignal, QTimer, QSize, QPoint,
-    QSettings, QStandardPaths, QBuffer, QByteArray
-)
+from PyQt6.QtCore import QUrl, Qt, QTimer, QSize, QPoint, pyqtSignal
 from PyQt6.QtGui import (
-    QIcon, QPixmap, QColor, QPalette, QFont, QAction, QKeySequence,
-    QShortcut, QPainter, QLinearGradient
+    QFont, QAction, QKeySequence, QShortcut, QColor
 )
-from PyQt6.QtMultimedia import QSoundEffect
 
-
-# ===== مانع الإعلانات =====
-AD_DOMAINS = [
+# ===== مانع الإعلانات خفيف =====
+AD_DOMAINS = {
     "doubleclick.net", "googlesyndication.com", "googleadservices.com",
-    "adservice.google.com", "ads.youtube.com", "facebook.com/tr",
-    "connect.facebook.net", "google-analytics.com", "googletagmanager.com",
-    "scorecardresearch.com", "outbrain.com", "taboola.com",
-    "adnxs.com", "adsystem.amazon.com", "amazon-adsystem.com",
-    "advertising.com", "adbrite.com", "adform.net", "criteo.com",
-    "rubiconproject.com", "pubmatic.com", "openx.net", "adsrvr.org",
-    "moatads.com", "chartbeat.com", "quantserve.com", "hotjar.com",
-    "mouseflow.com", "fullstory.com", "logrocket.com", "mixpanel.com",
-    "segment.com", "amplitude.com", "yandex-team.ru/adfox",
-    "pagead2.googlesyndication.com", "tpc.googlesyndication.com",
-]
-
-AD_URL_PATTERNS = [
-    r"/ads/", r"/ad/", r"/advertisement", r"/tracking/",
-    r"/pixel/", r"/beacon/", r"\.ads\.", r"/analytics/",
-    r"/telemetry/", r"/metrics/", r"/_tr/", r"/collect\?",
-]
-
+    "google-analytics.com", "googletagmanager.com", "facebook.com/tr",
+    "ads.youtube.com", "amazon-adsystem.com", "taboola.com", "outbrain.com"
+}
 
 class AdBlocker(QWebEngineUrlRequestInterceptor):
     def __init__(self, enabled=True):
@@ -70,20 +45,20 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
     def interceptRequest(self, info):
         if not self.enabled:
             return
-        url = info.requestUrl().toString()
         host = info.requestUrl().host()
-
+        url = info.requestUrl().toString()
+        
+        # فحص سريع للمجالات المحظورة
         for domain in AD_DOMAINS:
             if domain in host:
                 info.block(True)
                 self.blocked_count += 1
                 return
-
-        for pattern in AD_URL_PATTERNS:
-            if re.search(pattern, url, re.IGNORECASE):
-                info.block(True)
-                self.blocked_count += 1
-                return
+        
+        # فحص أنماط URL
+        if any(p in url for p in ['/ads/', '/ad/', '/tracking/', '/analytics/']):
+            info.block(True)
+            self.blocked_count += 1
 
 
 # ===== صفحة الويب المخصصة =====
@@ -92,13 +67,11 @@ class BrowserPage(QWebEnginePage):
         super().__init__(profile, parent)
 
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceId):
-        pass  # تجاهل رسائل الكونسول
+        pass
 
     def createWindow(self, type_):
-        # فتح نوافذ جديدة في تبويب جديد
         if hasattr(self.parent(), 'create_new_tab'):
-            new_view = self.parent().create_new_tab()
-            return new_view.page()
+            return self.parent().create_new_tab().page()
         return super().createWindow(type_)
 
 
@@ -109,6 +82,8 @@ class BrowserView(QWebEngineView):
         self.tab_widget = parent
         page = BrowserPage(profile, self)
         self.setPage(page)
+        # إزالة المستطيل الأزرق عند التحديد
+        self.setStyleSheet("QWebEngineView { outline: none; }")
 
     def create_new_tab(self):
         if self.tab_widget and hasattr(self.tab_widget, 'add_new_tab'):
@@ -117,189 +92,96 @@ class BrowserView(QWebEngineView):
 
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu()
-        
-        # إضافة خيارات مخصصة
         menu.addSeparator()
-        save_page = QAction("💾 حفظ الصفحة", self)
-        save_page.triggered.connect(self.save_page)
-        menu.addAction(save_page)
-
-        view_source = QAction("🔍 عرض المصدر", self)
-        view_source.triggered.connect(self.view_source)
-        menu.addAction(view_source)
-
+        
+        save_action = QAction("💾 حفظ", self)
+        save_action.triggered.connect(lambda: self.page().save(str(Path.home() / "Downloads" / "page.html")))
+        menu.addAction(save_action)
+        
         menu.exec(event.globalPos())
 
-    def save_page(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "حفظ الصفحة", "", "HTML (*.html);;MHTML (*.mhtml)"
-        )
-        if path:
-            self.page().save(path)
 
-    def view_source(self):
-        self.page().toHtml(lambda html: self._show_source(html))
-
-    def _show_source(self, html):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("مصدر الصفحة")
-        dlg.resize(800, 600)
-        layout = QVBoxLayout(dlg)
-        text = QTextEdit()
-        text.setPlainText(html)
-        text.setFont(QFont("Courier New", 10))
-        layout.addWidget(text)
-        dlg.exec()
-
-
-# ===== نافذة التاريخ =====
-class HistoryDialog(QDialog):
+# ===== نوافذ بسيطة =====
+class SimpleListDialog(QDialog):
+    """نافذة قائمة بسيطة للتاريخ والإشارات"""
     navigate_to = pyqtSignal(str)
 
-    def __init__(self, history, parent=None):
+    def __init__(self, title, items, parent=None, show_delete=False, show_clear=False):
         super().__init__(parent)
-        self.setWindowTitle("📅 سجل التصفح")
-        self.resize(700, 500)
-        self.history = history
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-
-        search_bar = QLineEdit()
-        search_bar.setPlaceholderText("🔍 بحث في التاريخ...")
-        search_bar.textChanged.connect(self._filter)
-        layout.addWidget(search_bar)
-
-        self.list_widget = QListWidget()
-        self.list_widget.itemDoubleClicked.connect(self._on_item_clicked)
-        layout.addWidget(self.list_widget)
-
-        btn_layout = QHBoxLayout()
-        clear_btn = QPushButton("🗑️ مسح الكل")
-        clear_btn.clicked.connect(self._clear_history)
-        close_btn = QPushButton("❌ إغلاق")
-        close_btn.clicked.connect(self.close)
-        btn_layout.addWidget(clear_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-
-        self._populate()
-
-    def _populate(self, filter_text=""):
-        self.list_widget.clear()
-        for entry in reversed(self.history):
-            if filter_text.lower() in entry['url'].lower() or \
-               filter_text.lower() in entry.get('title', '').lower():
-                item_text = f"[{entry['time']}] {entry.get('title', entry['url'])}\n{entry['url']}"
-                item = QListWidgetItem(item_text)
-                item.setData(Qt.ItemDataRole.UserRole, entry['url'])
-                self.list_widget.addItem(item)
-
-    def _filter(self, text):
-        self._populate(text)
-
-    def _on_item_clicked(self, item):
-        url = item.data(Qt.ItemDataRole.UserRole)
-        self.navigate_to.emit(url)
-        self.close()
-
-    def _clear_history(self):
-        self.history.clear()
-        self.list_widget.clear()
-
-
-# ===== نافذة الإشارات المرجعية =====
-class BookmarksDialog(QDialog):
-    navigate_to = pyqtSignal(str)
-
-    def __init__(self, bookmarks, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("⭐ الإشارات المرجعية")
+        self.setWindowTitle(title)
         self.resize(600, 400)
-        self.bookmarks = bookmarks
+        self.items = items
+        self.show_delete = show_delete
+        self.show_clear = show_clear
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-
         self.list_widget = QListWidget()
         self.list_widget.itemDoubleClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget)
 
         btn_layout = QHBoxLayout()
-        delete_btn = QPushButton("🗑️ حذف")
-        delete_btn.clicked.connect(self._delete_selected)
+        if self.show_delete:
+            del_btn = QPushButton("🗑️ حذف")
+            del_btn.clicked.connect(self._delete_selected)
+            btn_layout.addWidget(del_btn)
+        if self.show_clear:
+            clear_btn = QPushButton("🗑️ مسح الكل")
+            clear_btn.clicked.connect(self._clear_all)
+            btn_layout.addWidget(clear_btn)
+        btn_layout.addStretch()
         close_btn = QPushButton("❌ إغلاق")
         close_btn.clicked.connect(self.close)
-        btn_layout.addWidget(delete_btn)
-        btn_layout.addStretch()
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
-
         self._populate()
 
     def _populate(self):
         self.list_widget.clear()
-        for bm in self.bookmarks:
-            item = QListWidgetItem(f"⭐ {bm['title']}\n{bm['url']}")
-            item.setData(Qt.ItemDataRole.UserRole, bm['url'])
-            self.list_widget.addItem(item)
+        for item in reversed(self.items) if hasattr(self, 'items') else self.items:
+            if isinstance(item, dict):
+                text = f"{item.get('title', item.get('url', ''))}\n{item['url']}"
+                self.list_widget.addItem(text)
+            else:
+                self.list_widget.addItem(str(item))
 
     def _on_item_clicked(self, item):
-        url = item.data(Qt.ItemDataRole.UserRole)
-        self.navigate_to.emit(url)
+        row = self.list_widget.row(item)
+        data = self.items[row] if row < len(self.items) else None
+        if data and isinstance(data, dict) and 'url' in data:
+            self.navigate_to.emit(data['url'])
         self.close()
 
     def _delete_selected(self):
-        items = self.list_widget.selectedItems()
-        for item in items:
-            url = item.data(Qt.ItemDataRole.UserRole)
-            self.bookmarks[:] = [b for b in self.bookmarks if b['url'] != url]
+        row = self.list_widget.currentRow()
+        if 0 <= row < len(self.items):
+            self.items.pop(row)
+            self._populate()
+
+    def _clear_all(self):
+        self.items.clear()
         self._populate()
 
 
-# ===== نافذة التنزيلات =====
-class DownloadsDialog(QDialog):
-    def __init__(self, downloads, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("📥 التنزيلات")
-        self.resize(700, 400)
-        self.downloads = downloads
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        self.list_widget = QListWidget()
-        layout.addWidget(self.list_widget)
-
-        close_btn = QPushButton("❌ إغلاق")
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-
-        self._populate()
-
-    def _populate(self):
-        self.list_widget.clear()
-        for dl in self.downloads:
-            status = "✅" if dl.get('done') else "⏳"
-            item = QListWidgetItem(f"{status} {dl['name']}\n{dl['path']}")
-            self.list_widget.addItem(item)
-
-
-# ===== نافذة الإعدادات =====
+# ===== نافذة الإعدادات الكاملة =====
 class SettingsDialog(QDialog):
     def __init__(self, settings_data, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚙️ الإعدادات")
-        self.resize(500, 400)
+        self.resize(550, 500)
         self.settings_data = settings_data
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        
         # الصفحة الرئيسية
         home_group = QGroupBox("🏠 الصفحة الرئيسية")
         home_layout = QHBoxLayout()
@@ -307,34 +189,77 @@ class SettingsDialog(QDialog):
         home_layout.addWidget(QLabel("الرابط:"))
         home_layout.addWidget(self.home_edit)
         home_group.setLayout(home_layout)
-        layout.addWidget(home_group)
+        container_layout.addWidget(home_group)
 
         # محرك البحث
         search_group = QGroupBox("🔍 محرك البحث")
         search_layout = QHBoxLayout()
         self.search_combo = QComboBox()
         self.search_combo.addItems(["Google", "DuckDuckGo", "Bing", "Brave"])
-        current = self.settings_data.get('search_engine', 'Google')
-        self.search_combo.setCurrentText(current)
+        self.search_combo.setCurrentText(self.settings_data.get('search_engine', 'Google'))
         search_layout.addWidget(QLabel("المحرك:"))
         search_layout.addWidget(self.search_combo)
         search_group.setLayout(search_layout)
-        layout.addWidget(search_group)
+        container_layout.addWidget(search_group)
 
-        # خصوصية
-        privacy_group = QGroupBox("🔒 الخصوصية")
+        # الأداء و GPU
+        perf_group = QGroupBox("⚡ الأداء و GPU")
+        perf_layout = QVBoxLayout()
+        self.gpu_cb = QCheckBox("تسريع GPU (يحتاج إعادة تشغيل)")
+        self.gpu_cb.setChecked(self.settings_data.get('gpu_acceleration', True))
+        self.cache_limit = QSpinBox()
+        self.cache_limit.setRange(64, 2048)
+        self.cache_limit.setValue(self.settings_data.get('cache_limit_mb', 256))
+        self.cache_limit.setSuffix(" MB")
+        perf_layout.addWidget(self.gpu_cb)
+        perf_layout.addWidget(QLabel("حد الكاش:"))
+        perf_layout.addWidget(self.cache_limit)
+        perf_group.setLayout(perf_layout)
+        container_layout.addWidget(perf_group)
+
+        # الخصوصية
+        privacy_group = QGroupBox("🔒 الخصوصية والحماية")
         privacy_layout = QVBoxLayout()
-        self.ad_block_cb = QCheckBox("تفعيل مانع الإعلانات")
+        self.ad_block_cb = QCheckBox("مانع الإعلانات")
         self.ad_block_cb.setChecked(self.settings_data.get('ad_block', True))
-        self.js_cb = QCheckBox("تفعيل JavaScript")
+        self.js_cb = QCheckBox("JavaScript")
         self.js_cb.setChecked(self.settings_data.get('javascript', True))
-        self.cookies_cb = QCheckBox("قبول الكوكيز")
+        self.cookies_cb = QCheckBox("الكوكيز")
         self.cookies_cb.setChecked(self.settings_data.get('cookies', True))
+        self.images_cb = QCheckBox("الصور")
+        self.images_cb.setChecked(self.settings_data.get('images', True))
         privacy_layout.addWidget(self.ad_block_cb)
         privacy_layout.addWidget(self.js_cb)
         privacy_layout.addWidget(self.cookies_cb)
+        privacy_layout.addWidget(self.images_cb)
         privacy_group.setLayout(privacy_layout)
-        layout.addWidget(privacy_group)
+        container_layout.addWidget(privacy_group)
+
+        # الألوان
+        colors_group = QGroupBox("🎨 تخصيص الألوان")
+        colors_layout = QFormLayout()
+        
+        self.bg_color_btn = QPushButton("لون الخلفية")
+        self.bg_color_btn.setStyleSheet(f"background-color: {self.settings_data.get('bg_color', '#1a1a2e')}")
+        self.bg_color_btn.clicked.connect(lambda: self._pick_color('bg'))
+        
+        self.fg_color_btn = QPushButton("لون النص")
+        self.fg_color_btn.setStyleSheet(f"background-color: {self.settings_data.get('fg_color', '#e0e0e0')}")
+        self.fg_color_btn.clicked.connect(lambda: self._pick_color('fg'))
+        
+        self.accent_color_btn = QPushButton("لون التمييز")
+        self.accent_color_btn.setStyleSheet(f"background-color: {self.settings_data.get('accent_color', '#4fc3f7')}")
+        self.accent_color_btn.clicked.connect(lambda: self._pick_color('accent'))
+        
+        colors_layout.addRow(self.bg_color_btn)
+        colors_layout.addRow(self.fg_color_btn)
+        colors_layout.addRow(self.accent_color_btn)
+        colors_group.setLayout(colors_layout)
+        container_layout.addWidget(colors_group)
+
+        container_layout.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
 
         # أزرار
         btn_layout = QHBoxLayout()
@@ -346,140 +271,30 @@ class SettingsDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
 
+    def _pick_color(self, color_type):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            hex_color = color.name()
+            if color_type == 'bg':
+                self.settings_data['bg_color'] = hex_color
+                self.bg_color_btn.setStyleSheet(f"background-color: {hex_color}")
+            elif color_type == 'fg':
+                self.settings_data['fg_color'] = hex_color
+                self.fg_color_btn.setStyleSheet(f"background-color: {hex_color}")
+            elif color_type == 'accent':
+                self.settings_data['accent_color'] = hex_color
+                self.accent_color_btn.setStyleSheet(f"background-color: {hex_color}")
+
     def _save(self):
         self.settings_data['home'] = self.home_edit.text()
         self.settings_data['search_engine'] = self.search_combo.currentText()
+        self.settings_data['gpu_acceleration'] = self.gpu_cb.isChecked()
+        self.settings_data['cache_limit_mb'] = self.cache_limit.value()
         self.settings_data['ad_block'] = self.ad_block_cb.isChecked()
         self.settings_data['javascript'] = self.js_cb.isChecked()
         self.settings_data['cookies'] = self.cookies_cb.isChecked()
+        self.settings_data['images'] = self.images_cb.isChecked()
         self.accept()
-
-
-# ===== نافذة الملحقات =====
-class ExtensionsDialog(QDialog):
-    def __init__(self, extensions, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("🧩 الملحقات")
-        self.resize(600, 450)
-        self.extensions = extensions
-        self.parent_window = parent
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-
-        info = QLabel("⚠️ يمكن تحميل ملحقات JavaScript بصيغة .zip تحتوي على manifest.json وملف JS")
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #aaa; font-size: 11px;")
-        layout.addWidget(info)
-
-        self.list_widget = QListWidget()
-        self._populate()
-        layout.addWidget(self.list_widget)
-
-        btn_layout = QHBoxLayout()
-        install_btn = QPushButton("📦 تثبيت ملحق")
-        install_btn.clicked.connect(self._install_extension)
-        remove_btn = QPushButton("🗑️ إزالة")
-        remove_btn.clicked.connect(self._remove_extension)
-        toggle_btn = QPushButton("⏯️ تفعيل/إيقاف")
-        toggle_btn.clicked.connect(self._toggle_extension)
-        close_btn = QPushButton("❌ إغلاق")
-        close_btn.clicked.connect(self.close)
-
-        btn_layout.addWidget(install_btn)
-        btn_layout.addWidget(remove_btn)
-        btn_layout.addWidget(toggle_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-
-    def _populate(self):
-        self.list_widget.clear()
-        for ext in self.extensions:
-            status = "✅" if ext.get('enabled', True) else "⏸️"
-            item = QListWidgetItem(f"{status} {ext['name']}\n{ext.get('description', '')}")
-            item.setData(Qt.ItemDataRole.UserRole, ext['id'])
-            self.list_widget.addItem(item)
-
-    def _install_extension(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "اختر ملف الملحق", "", "ZIP Files (*.zip);;JS Files (*.js)"
-        )
-        if not path:
-            return
-
-        ext_dir = Path.home() / ".browser_extensions"
-        ext_dir.mkdir(exist_ok=True)
-
-        if path.endswith('.zip'):
-            try:
-                with zipfile.ZipFile(path, 'r') as z:
-                    names = z.namelist()
-                    if 'manifest.json' not in names:
-                        QMessageBox.warning(self, "خطأ", "الملف لا يحتوي على manifest.json")
-                        return
-                    manifest_data = json.loads(z.read('manifest.json'))
-                    ext_name = manifest_data.get('name', Path(path).stem)
-                    ext_id = ext_name.lower().replace(' ', '_')
-                    ext_path = ext_dir / ext_id
-                    ext_path.mkdir(exist_ok=True)
-                    z.extractall(ext_path)
-
-                    # قراءة أول ملف JS
-                    js_files = [n for n in names if n.endswith('.js')]
-                    js_code = ""
-                    if js_files:
-                        js_code = z.read(js_files[0]).decode('utf-8', errors='ignore')
-
-                    ext = {
-                        'id': ext_id,
-                        'name': ext_name,
-                        'description': manifest_data.get('description', ''),
-                        'enabled': True,
-                        'path': str(ext_path),
-                        'js': js_code
-                    }
-                    self.extensions.append(ext)
-                    self._populate()
-                    QMessageBox.information(self, "نجاح", f"تم تثبيت {ext_name}")
-            except Exception as e:
-                QMessageBox.critical(self, "خطأ", f"فشل تثبيت الملحق: {e}")
-
-        elif path.endswith('.js'):
-            ext_name = Path(path).stem
-            ext_id = ext_name.lower().replace(' ', '_')
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                js_code = f.read()
-            ext = {
-                'id': ext_id,
-                'name': ext_name,
-                'description': 'ملحق JavaScript',
-                'enabled': True,
-                'path': path,
-                'js': js_code
-            }
-            self.extensions.append(ext)
-            self._populate()
-            QMessageBox.information(self, "نجاح", f"تم تثبيت {ext_name}")
-
-    def _remove_extension(self):
-        items = self.list_widget.selectedItems()
-        if not items:
-            return
-        ext_id = items[0].data(Qt.ItemDataRole.UserRole)
-        self.extensions[:] = [e for e in self.extensions if e['id'] != ext_id]
-        self._populate()
-
-    def _toggle_extension(self):
-        items = self.list_widget.selectedItems()
-        if not items:
-            return
-        ext_id = items[0].data(Qt.ItemDataRole.UserRole)
-        for ext in self.extensions:
-            if ext['id'] == ext_id:
-                ext['enabled'] = not ext.get('enabled', True)
-        self._populate()
 
 
 # ===== التبويب الواحد =====
