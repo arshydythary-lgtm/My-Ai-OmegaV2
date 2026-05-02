@@ -869,9 +869,33 @@ class MainBrowser(QMainWindow):
                 self.setWindowTitle(f"{title} - المتصفح المطور")
 
     def _close_tab(self, idx):
-        if self.tabs.count() <= 1:
-            self.add_new_tab()
+        widget = self.tabs.widget(idx)
+        if widget:
+            widget.deleteLater()
         self.tabs.removeTab(idx)
+        if self.tabs.count() == 0:
+            self.close()
+    def _close_tab(self, idx):
+        widget = self.tabs.widget(idx)
+        if widget:
+            widget.deleteLater()
+        self.tabs.removeTab(idx)
+        if self.tabs.count() == 0:
+            self.close()
+    def _close_tab(self, idx):
+        widget = self.tabs.widget(idx)
+        if widget:
+            widget.deleteLater()
+        self.tabs.removeTab(idx)
+        if self.tabs.count() == 0:
+            self.close()
+    def _close_tab(self, idx):
+        widget = self.tabs.widget(idx)
+        if widget:
+            widget.deleteLater()
+        self.tabs.removeTab(idx)
+        if self.tabs.count() == 0:
+            self.close()
 
     def _close_current_tab(self):
         self._close_tab(self.tabs.currentIndex())
