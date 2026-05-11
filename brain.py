@@ -149,13 +149,17 @@ class Brain:
     # ============================================================
 
     def _clean_text(self, text: str) -> str:
-        """تنظيف النص"""
+        """تنظيف النص مع الحفاظ على اللغة العربية والتشكيل"""
         # إزالة المسافات الزائدة
         text = re.sub(r'\s+', ' ', text)
         # إزالة الأسطر الفارغة المتعددة
         text = re.sub(r'\n{3,}', '\n\n', text)
-        # إزالة الرموز الغريبة
-        text = re.sub(r'[^\w\s\.\,\!\؟\-\:\(\)،\—]', '', text)
+
+        # تحسين Regex للحفاظ على الأحرف العربية والتشكيل والرموز الشائعة
+        # نسمح بـ: حروف كلمات، أرقام، مسافات، وعلامات ترقيم عربية وإنجليزية شائعة
+        allowed_pattern = r'[^\w\s\.\,\!\؟\-\:\(\)\[\]\"\'\،\—\؛\«\»\ء-ي\u064B-\u065F]'
+        text = re.sub(allowed_pattern, '', text)
+
         return text.strip()
 
     def _truncate_text(self, text: str, max_length: int) -> str:
@@ -177,6 +181,7 @@ class Brain:
             truncated.rfind(','),
             truncated.rfind('!'),
             truncated.rfind('؟'),
+            truncated.rfind('\n'),
         )
         if last_punct > max_length * 0.7:
             truncated = truncated[:last_punct + 1]
@@ -264,7 +269,7 @@ class Brain:
         """
         self.stats["total_prompts_built"] += 1
 
-        # اتخاذ الق��ار
+        # اتخاذ القرار
         decision = self.decide(user_input, additional_context or "")
 
         # بناء الأقسام
@@ -294,29 +299,29 @@ class Brain:
             if conv_text:
                 sections.append(("المحادثة السابقة", conv_text))
 
-        # 4. بناء الـ prompt النهائي
-        prompt = self.system_prompt.strip() + "\n\n"
+        # 4. بناء الـ prompt النهائي بتنسيق واضح للنموذج الكبير
+        prompt = f"### نظام ###\n{self.system_prompt.strip()}\n\n"
 
         # إضافة السياق
         if additional_context:
-            prompt += "=== معلومات إضافية ===\n"
+            prompt += "### معلومات إضافية ###\n"
             prompt += self._truncate_text(additional_context, self.max_context_length // 3)
             prompt += "\n\n"
 
         # إضافة المحادثة السابقة
         if conversation_history:
-            prompt += "=== المحادثة ===\n"
+            prompt += "### المحادثة ###\n"
             for msg in conversation_history[-self.max_history:]:
                 role = msg.get("role", "user")
                 content = msg.get("content", "").strip()
                 if content:
                     content = self._clean_text(content)
-                    display_name = "أنت" if role == "user" else self.model_name
+                    display_name = "المستخدم" if role == "user" else self.model_name
                     prompt += f"{display_name}: {content}\n"
             prompt += "\n"
 
         # إضافة السؤال الحالي
-        prompt += f"=== السؤال ===\nأنت: {user_input}\n\n"
+        prompt += f"### السؤال الحالي ###\nالمستخدم: {user_input}\n\n"
         prompt += f"{self.model_name}: "
 
         return prompt
