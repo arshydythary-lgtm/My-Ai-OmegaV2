@@ -23,7 +23,7 @@ PAGE_CONFIG = {
 }
 
 # ✅ إصلاح حرج: استخدام CUDA إذا كان متاحاً، وليس العكس
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 CHECKPOINT_DIR = "try"
 TOKENIZER_PATH = "my_tokenizer"
 
@@ -37,12 +37,12 @@ DEFAULT_GEN_CONFIG = {
 
 # معاملات النموذج المحسّن (متطابقة مع train.py الجديد)
 DEFAULT_MODEL_CONFIG = {
-    "d_model": 512,
-    "n_heads": 8,
-    "num_layers": 8,
+    "d_model": 1024,
+    "n_heads": 16,
+    "num_layers": 16,
     "max_seq_len": 512,
     "use_lora": True,
-    "lora_r": 16,
+    "lora_r": 32,
     "use_gradient_checkpoint": True,
     "use_flash_attn": True,
     "dropout": 0.1,
@@ -121,12 +121,12 @@ def load_model(_tokenizer):
         # بناء النموذج بالإعدادات المستخرجة
         model = OptimizedMiniLLM(
             vocab_size=vocab_size,
-            d_model=final_config.get("d_model", 512),
-            n_heads=final_config.get("n_heads", 8),
-            num_layers=final_config.get("num_layers", 8),
+            d_model=final_config.get("d_model", 1024),
+            n_heads=final_config.get("n_heads", 16),
+            num_layers=final_config.get("num_layers", 16),
             max_seq_len=final_config.get("max_seq_len", 512),
             use_lora=final_config.get("use_lora", True),
-            lora_r=final_config.get("lora_r", 16),
+            lora_r=final_config.get("lora_r", 32),
             use_gradient_checkpoint=final_config.get("use_gradient_checkpoint", True),
             dropout=final_config.get("dropout", 0.1),
         ).to(DEVICE)
@@ -151,7 +151,7 @@ def load_model(_tokenizer):
         optimizations = []
         if final_config.get("use_gradient_checkpoint"): optimizations.append("Grad Checkpoint")
         if final_config.get("use_flash_attn"): optimizations.append("Flash Attention")
-        if final_config.get("use_lora"): optimizations.append(f"LoRA (r={final_config.get('lora_r', 16)})")
+        if final_config.get("use_lora"): optimizations.append(f"LoRA (r={final_config.get('lora_r', 8)})")
 
         st.session_state.model_info = {
             "name": model_name,
