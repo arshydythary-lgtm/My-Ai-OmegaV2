@@ -294,6 +294,12 @@ def collate_fn(batch, block_size, pad_id):
     padded_ids, targets, target_masks = [], [], []
 
     for ids, mask in batch:
+        # تحويل tensors إلى lists إذا لزم الأمر
+        if isinstance(ids, torch.Tensor):
+            ids = ids.tolist()
+        if isinstance(mask, torch.Tensor):
+            mask = mask.tolist()
+        
         # قص إذا تجاوز الطول الأقصى
         if len(ids) > max_len:
             ids = ids[:max_len]
