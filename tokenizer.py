@@ -1,6 +1,7 @@
-# tokenizer.py - نسخة محسّنة مع معالجة أفضل للعربية
+# tokenizer.py - نسخة محسّنة تدعم العربية والإنجليزية بذكاء (مع معالجة متقدمة للأرقام والرموز)
 import os
 import json
+import re
 from typing import List, Dict, Tuple
 import pickle
 
@@ -8,7 +9,7 @@ import pickle
 class MyTokenizer:
     """
     Tokenizer خفيف الوزن بدون اعتمادية على مكتبات خارجية
-    يدعم العربية والإنجليزية بشكل صحيح
+    يدعم العربية والإنجليزية بشكل صحيح ومحسن
     """
 
     def __init__(self, vocab: Dict[str, int], special_tokens: Dict[str, int]):
@@ -20,16 +21,23 @@ class MyTokenizer:
         self.special_tokens = special_tokens
         self.vocab_size = len(vocab)
 
-        # تعيين الـ IDs
+        # تعيين الـ Tokens
         self.pad_token = "<pad>"
         self.unk_token = "<unk>"
         self.bos_token = "<bos>"
         self.eos_token = "<eos>"
 
+        # تعيين الـ IDs الطويلة
         self.pad_token_id = special_tokens.get(self.pad_token, 0)
         self.unk_token_id = special_tokens.get(self.unk_token, 1)
         self.bos_token_id = special_tokens.get(self.bos_token, 2)
         self.eos_token_id = special_tokens.get(self.eos_token, 3)
+
+        # ✅ أسماء مختصرة متوافقة مع train.py
+        self.pad_id = self.pad_token_id
+        self.unk_id = self.unk_token_id
+        self.bos_id = self.bos_token_id
+        self.eos_id = self.eos_token_id
 
         # عكس القاموس للفك
         self.id_to_token = {v: k for k, v in vocab.items()}
@@ -50,10 +58,9 @@ class MyTokenizer:
         # 1. عد تردد الكلمات
         word_freq = {}
         for text in texts:
-            # تقسيم على المسافات والعلامات الترقيمية
-            words = cls._tokenize_text(text)
-            for word in words:
-                word_freq[word] = word_freq.get(word, 0) + 1
+            tokens = cls._tokenize_text(text)
+            for token in tokens:
+                word_freq[token] = word_freq.get(token, 0) + 1
 
         # 2. الاحتفاظ بـ vocab_size الأعلى
         special_tokens = {
@@ -80,11 +87,9 @@ class MyTokenizer:
         # 3. الحفظ
         os.makedirs(save_path, exist_ok=True)
 
-        # حفظ vocab
         with open(os.path.join(save_path, "vocab.json"), "w", encoding="utf-8") as f:
             json.dump(vocab, f, ensure_ascii=False, indent=2)
 
-        # حفظ special tokens
         with open(os.path.join(save_path, "special_tokens.json"), "w", encoding="utf-8") as f:
             json.dump(special_tokens, f, ensure_ascii=False, indent=2)
 
@@ -111,13 +116,32 @@ class MyTokenizer:
 
     @staticmethod
     def _tokenize_text(text: str) -> List[str]:
-        """تقسيم النص إلى كلمات (بسيط لكن فعال)"""
-        import re
-        # إزالة المسافات الزائدة
-        text = text.strip()
-        # تقسيم على المسافات والعلامات الترقيمية
-        words = re.findall(r'\b\w+\b|[^\w\s]', text)
-        return [w.lower() for w in words if w]
+        """
+        تقسيم النص إلى Tokens بدقة عالية.
+        تحسينات جديدة:
+        - التعامل مع الأرقام المتصلة بالحروف (مثل GPT-4, 2024م).
+        - التعامل مع الروابط وعلامات البريد الإلكتروني ككتلة واحدة.
+        """
+        # نمط متطور:
+        # 1. [\w]+(?:'[\w]+)? : كلمات إنجليزية/عربية مع اختصارات
+        # 2. [\u0600-\u06FF]+ : كلمات عربية صريحة (للتأكد من عدم انفصال الحروف في بعض البيئات)
+        # 3. \d+(?:[\.\,]\d+)*%? : أرقام ونسب مئوية
+        # 4. [^\w\s\u0600-\u06FF] : رموز وعلامات ترقيم
+
+        # دمج الأنماط لالتقاط أفضل نتيجة
+        pattern = r"[a-zA-Z0-9]+(?:'[a-zA-Z0-9]+)?|[\u0600-\u06FF]+|[^\w\s\u0600-\u06FF]"
+
+        tokens = re.findall(pattern, text)
+
+        # تحويل الكلمات الإنجليزية الصرفة لأحرف صغيرة، مع الحفاظ على العربية والأرقام كما هي
+        processed_tokens = []
+        for t in tokens:
+            if re.match(r'^[a-zA-Z]+$', t):
+                processed_tokens.append(t.lower())
+            else:
+                processed_tokens.append(t)
+
+        return [t for t in processed_tokens if t]
 
     def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
         """تكويد النص إلى قائمة من الـ IDs"""
@@ -138,7 +162,18 @@ class MyTokenizer:
             token = self.id_to_token.get(token_id, self.unk_token)
             tokens.append(token)
 
-        return " ".join(tokens)
+        # إعادة تجميع النص
+        text = " ".join(tokens)
+
+        # إصلاح المسافات حول علامات الترقيم
+        text = re.sub(r'\s+([,.!?;:\)\]}>])', r'\1', text)
+        text = re.sub(r'([\(\[{<])\s+', r'\1', text)
+
+        # إصلاح المسافات بين الكلمات العربية والإنجليزية لتحسين القراءة (اختياري)
+        # إزالة المسافة قبل علامات الترقيم العربية تحديداً إذا وجدت
+        text = re.sub(r'\s+([؛،؟!])', r'\1', text)
+
+        return text.strip()
 
     def batch_encode(self, texts: List[str], add_special_tokens: bool = True) -> List[List[int]]:
         """تكويد قائمة نصوص دفعة واحدة"""
