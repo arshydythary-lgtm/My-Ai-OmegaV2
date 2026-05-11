@@ -41,8 +41,8 @@ class LoRALinear(nn.Module):
             self,
             in_features: int,
             out_features: int,
-            r: int = 16,
-            lora_alpha: int = 32,
+            r: int = 32,
+            lora_alpha: int = 64,
             lora_dropout: float = 0.1
     ):
         super().__init__()
@@ -136,7 +136,7 @@ class FlashAttention(nn.Module):
         self.scale = 1.0 / math.sqrt(self.head_dim)
         self.dropout = dropout
 
-        self.qkv = nn.Linear(d_model, d_model * 4)
+        self.qkv = nn.Linear(d_model, d_model * 3)
         self.out_proj = nn.Linear(d_model, d_model)
         self.use_flash = hasattr(F, "scaled_dot_product_attention")
 
@@ -228,7 +228,7 @@ class OptimizedTransformerBlock(nn.Module):
 # 7. Student Model (للـ Distillation)
 ########################################
 class StudentModel(nn.Module):
-    def __init__(self, vocab_size: int, d_model: int = 256, n_heads: int = 4, num_layers: int = 4,
+    def __init__(self, vocab_size: int, d_model: int = 256, n_heads: int = 4, num_layers: int = 3,
                  max_seq_len: int = 512):
         super().__init__()
         self.token_emb = nn.Embedding(vocab_size, d_model)
@@ -259,12 +259,12 @@ class OptimizedMiniLLM(nn.Module):
     def __init__(
             self,
             vocab_size: int,
-            d_model: int = 512,
-            n_heads: int = 8,
-            num_layers: int = 8,
+            d_model: int = 1024,
+            n_heads: int = 16,
+            num_layers: int = 16,
             max_seq_len: int = 512,
             use_lora: bool = True,
-            lora_r: int = 16,
+            lora_r: int = 32,
             use_gradient_checkpoint: bool = True,
             dropout: float = 0.1
     ):
@@ -404,11 +404,11 @@ def compare_models():
     try:
         model = OptimizedMiniLLM(
             vocab_size=16000,
-            d_model=512,
-            n_heads=8,
-            num_layers=8,  # عدد قليل للاختبار
+            d_model=1024,
+            n_heads=16,
+            num_layers=4,  # عدد قليل للاختبار
             use_lora=True,
-            lora_r=16,
+            lora_r=32,
             use_gradient_checkpoint=True
         ).to(device)
 
