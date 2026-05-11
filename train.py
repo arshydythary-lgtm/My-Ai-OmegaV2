@@ -42,8 +42,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="تدريب نموذج MiniLLM المحسن")
 
     # معاملات التدريب الأساسية
-    parser.add_argument("--epochs", type=int, default=5, help="عدد الحقبات")
-    parser.add_argument("--batch_size", type=int, default=1, help="حجم الدفعة")
+    parser.add_argument("--epochs", type=int, default=1, help="عدد الحقبات")
+    parser.add_argument("--batch_size", type=int, default=4, help="حجم الدفعة")
     parser.add_argument("--lr", type=float, default=5e-4, help="معدل التعلم")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="تحلل الأوزان")
     parser.add_argument("--grad_accum", type=int, default=16, help="تجميع التدرجات")
@@ -88,7 +88,7 @@ USE_GRAD_CHECKPOINT = True
 def setup_device():
     """إعداد الجهاز والإعدادات الأمثل"""
     if torch.cuda.is_available():
-        device = "cuda"
+        device = "cpu"
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -294,6 +294,12 @@ def collate_fn(batch, block_size, pad_id):
     padded_ids, targets, target_masks = [], [], []
 
     for ids, mask in batch:
+        # تحويل tensors إلى lists إذا لزم الأمر
+        if isinstance(ids, torch.Tensor):
+            ids = ids.tolist()
+        if isinstance(mask, torch.Tensor):
+            mask = mask.tolist()
+
         # قص إذا تجاوز الطول الأقصى
         if len(ids) > max_len:
             ids = ids[:max_len]
