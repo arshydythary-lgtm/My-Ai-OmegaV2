@@ -52,9 +52,9 @@ def parse_args():
 
     # معاملات النموذج (يجب أن تتطابق مع model_optimized.py)
     parser.add_argument("--block_size", type=int, default=512, help="طول التسلسل")
-    parser.add_argument("--d_model", type=int, default=512, help="بعد النموذج")
-    parser.add_argument("--n_heads", type=int, default=8, help="عدد رؤوس الانتباه")
-    parser.add_argument("--num_layers", type=int, default=8, help="عدد طبقات النموذج")
+    parser.add_argument("--d_model", type=int, default=1024, help="بعد النموذج")
+    parser.add_argument("--n_heads", type=int, default=16, help="عدد رؤوس الانتباه")
+    parser.add_argument("--num_layers", type=int, default=16, help="عدد طبقات النموذج")
     parser.add_argument("--dropout", type=float, default=0.1, help="معدل الـ Dropout")
 
     # معاملات المسارات والتخزين
@@ -78,7 +78,7 @@ args = parse_args()
 
 # ثوابت لضمان التطابق التام مع بنية النموذج
 # ملاحظة: هذه القيم يجب أن تتطابق مع ما يتوقعه OptimizedMiniLLM أو يتم تمريرها له
-LORA_R = 16
+LORA_R = 32
 USE_GRAD_CHECKPOINT = True
 
 
