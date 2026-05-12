@@ -228,7 +228,10 @@ def build_sequence(text: str):
     if len(ids) < 2:
         return None
 
-    return ids
+    # إنشاء mask بنفس طول التسلسل (كل القيم 1 للنصوص الصالحة)
+    mask = [1] * len(ids)
+
+    return ids, mask
 
 # بناء البيانات
 train_pairs = []
