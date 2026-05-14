@@ -1,5 +1,11 @@
-# train.py - برنامج التدريب المحسن والمتوافق مع model_optimized.py
+# train.py - Fine-tuning Script for OptimizedMiniLLM
+# =============================================================================
+# هذا السكربت مصمم خصيصاً لـ Fine-tuning النموذج باستخدام تقنية LoRA
+# مع دعم التحميل من checkpoint وتجميد الطبقات الأساسية
+# =============================================================================
+
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,74 +18,103 @@ from datetime import datetime
 import warnings
 import gc
 import argparse
+import json
+from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 
 # استيراد النموذج المحسن
 from model_optimized import OptimizedMiniLLM
 
-# ملاحظة: تأكد من وجود ملفات tokenizer.py, memory.py, brain.py أو علق الأسطر التالية إذا لم تكن ضرورية للتدريب الأساسي
-try:
-    from tokenizer import MyTokenizer
-except ImportError:
-    print("⚠️  لم يتم العثور على tokenizer.py، سيتم استخدام فئة وهمية أو يجب توفيرها.")
-
-
-    # فئة وهمية للضرورة فقط إذا كان الملف مفقوداً (للغرض التجريبي)
-    class MyTokenizer:
-        @staticmethod
-        def load(path): return None
-
-        @staticmethod
-        def build(*args, **kwargs): return None
-
+# تجاهل التحذيرات غير الضرورية
 warnings.filterwarnings("ignore")
 
-
 # ============================================================
-# 1. معاملات سطر الأوامر
+# 1. معاملات سطر الأوامر (Fine-tuning Configuration)
 # ============================================================
 def parse_args():
-    parser = argparse.ArgumentParser(description="تدريب نموذج MiniLLM المحسن")
+    parser = argparse.ArgumentParser(
+        description="🔧 Fine-tuning Script for OptimizedMiniLLM with LoRA",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+أمثلة الاستخدام:
+  # Fine-tuning أساسي:
+  python train.py --data_path data.csv --epochs 3 --batch_size 8
+  
+  # Fine-tuning مع نموذج مُدرَّب مسبقاً:
+  python train.py --pretrained_path checkpoints/best_model.pth --data_path data.csv --lr 2e-4
+  
+  # Fine-tuning متقدم مع TPU/MPS:
+  python train.py --device mps --mixed_precision false --grad_accum 32
+        """
+    )
 
-    # معاملات التدريب الأساسية
-    parser.add_argument("--epochs", type=int, default=1, help="عدد الحقبات")
-    parser.add_argument("--batch_size", type=int, default=4, help="حجم الدفعة")
-    parser.add_argument("--lr", type=float, default=5e-4, help="معدل التعلم")
-    parser.add_argument("--weight_decay", type=float, default=0.01, help="تحلل الأوزان")
-    parser.add_argument("--grad_accum", type=int, default=16, help="تجميع التدرجات")
-    parser.add_argument("--patience", type=int, default=10, help="صبر Early Stopping")
-    parser.add_argument("--label_smoothing", type=float, default=0.1, help="تمويه التسمية")
+    # ==================== Fine-tuning Settings ====================
+    ft_group = parser.add_argument_group("🎯 Fine-tuning Configuration")
+    ft_group.add_argument("--mode", type=str, choices=["pretrain", "finetune"], default="finetune",
+                         help="وضع التدريب: pretrain (من الصفر) أو finetune (من نموذج موجود)")
+    ft_group.add_argument("--pretrained_path", type=str, default=None,
+                         help="مسار النموذج المُدرَّب مسبقاً للـ fine-tuning")
+    ft_group.add_argument("--freeze_base", action="store_true", default=True,
+                         help="تجميد الطبقات الأساسية واستخدام LoRA فقط (مفعّل افتراضياً)")
+    ft_group.add_argument("--unfreeze_layers", type=int, default=0,
+                         help="عدد الطبقات الأخيرة لفك التجميد عنها (0 = كلها مجمدة)")
 
-    # معاملات النموذج (يجب أن تتطابق مع model_optimized.py)
-    parser.add_argument("--block_size", type=int, default=512, help="طول التسلسل")
-    parser.add_argument("--d_model", type=int, default=1024, help="بعد النموذج")
-    parser.add_argument("--n_heads", type=int, default=16, help="عدد رؤوس الانتباه")
-    parser.add_argument("--num_layers", type=int, default=16, help="عدد طبقات النموذج")
-    parser.add_argument("--dropout", type=float, default=0.1, help="معدل الـ Dropout")
+    # ==================== Training Hyperparameters ====================
+    train_group = parser.add_argument_group("📈 Training Hyperparameters")
+    train_group.add_argument("--epochs", type=int, default=3, help="عدد حقبات التدريب")
+    train_group.add_argument("--batch_size", type=int, default=8, help="حجم الدفعة")
+    train_group.add_argument("--lr", type=float, default=2e-4, help="معدل التعلم (أقل للـ fine-tuning)")
+    train_group.add_argument("--min_lr", type=float, default=1e-6, help="أدنى معدل تعلم")
+    train_group.add_argument("--weight_decay", type=float, default=0.1, help="تحلل الأوزان")
+    train_group.add_argument("--grad_accum", type=int, default=16, help="تجميع التدرجات لتوفير الذاكرة")
+    train_group.add_argument("--patience", type=int, default=5, help="صبر Early Stopping")
+    train_group.add_argument("--label_smoothing", type=float, default=0.05, help="تمويه التسمية")
+    train_group.add_argument("--warmup_ratio", type=float, default=0.1, help="نسبة الإحماء من الخطوات الكلية")
 
-    # معاملات المسارات والتخزين
-    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints", help="مجلد الـ checkpoints")
-    parser.add_argument("--tokenizer_path", type=str, default="my_tokenizer", help="مسار الـ tokenizer")
-    parser.add_argument("--data_path", type=str, default="data.csv", help="مسار البيانات")
-    parser.add_argument("--tensorboard", action="store_true", help="تفعيل TensorBoard")
+    # ==================== Model Architecture ====================
+    model_group = parser.add_argument_group("🤖 Model Architecture")
+    model_group.add_argument("--block_size", type=int, default=512, help="الطول الأقصى للتسلسل")
+    model_group.add_argument("--d_model", type=int, default=1024, help="بعد التضمين")
+    model_group.add_argument("--n_heads", type=int, default=16, help="عدد رؤوس الانتباه")
+    model_group.add_argument("--num_layers", type=int, default=16, help="عدد طبقات المحول")
+    model_group.add_argument("--dropout", type=float, default=0.05, help="معدل Dropout")
+    model_group.add_argument("--lora_r", type=int, default=32, help="رتبة LoRA (rank)")
+    model_group.add_argument("--lora_alpha", type=int, default=64, help="معامل LoRA alpha")
+    model_group.add_argument("--lora_dropout", type=float, default=0.05, help="Dropout في LoRA")
 
-    # معاملات متقدمة
-    parser.add_argument("--seed", type=int, default=42, help="البذرة العشوائية")
-    parser.add_argument("--warmup_steps", type=int, default=500, help="خطوات الإحماء")
-    parser.add_argument("--gradient_clip", type=float, default=1.0, help="قص التدرجات")
-    parser.add_argument("--val_split", type=float, default=0.1, help="نسبة التحقق")
-    parser.add_argument("--num_workers", type=int, default=0, help="عمال DataLoader (0 للتبسيط)")
-    parser.add_argument("--resume", action="store_true", help="استئناف التدريب")
+    # ==================== Paths & Checkpoints ====================
+    path_group = parser.add_argument_group("📁 Paths & Storage")
+    path_group.add_argument("--output_dir", type=str, default="checkpoints", help="مجلد حفظ النماذج")
+    path_group.add_argument("--tokenizer_path", type=str, default="my_tokenizer", help="مسار الـ tokenizer")
+    path_group.add_argument("--data_path", type=str, default="data.csv", help="مسار بيانات التدريب")
+    path_group.add_argument("--log_dir", type=str, default="logs", help="مجلد السجلات")
+
+    # ==================== Advanced Options ====================
+    adv_group = parser.add_argument_group("⚙️  Advanced Options")
+    adv_group.add_argument("--device", type=str, default="auto", 
+                          choices=["auto", "cuda", "cpu", "mps", "xpu"],
+                          help="الجهاز المستخدم (auto للاختيار التلقائي)")
+    adv_group.add_argument("--mixed_precision", action="store_true", default=True,
+                          help="تفعيل Mixed Precision (AMP) لتسريع التدريب")
+    adv_group.add_argument("--gradient_clip", type=float, default=1.0, help="قيمة قص التدرجات")
+    val_group = adv_group.add_mutually_exclusive_group()
+    val_group.add_argument("--val_split", type=float, default=0.1, help="نسبة بيانات التحقق")
+    val_group.add_argument("--val_path", type=str, default=None, help="مسار منفصل لبيانات التحقق")
+    adv_group.add_argument("--seed", type=int, default=42, help="البذرة العشوائية")
+    adv_group.add_argument("--num_workers", type=int, default=0, help="عمال DataLoader")
+    adv_group.add_argument("--resume", type=str, default=None, help="مسار checkpoint للاستئناف")
+    adv_group.add_argument("--tensorboard", action="store_true", default=True, help="تفعيل TensorBoard")
+    adv_group.add_argument("--save_every", type=int, default=1, help="حفظ checkpoint كل N epoch")
+    adv_group.add_argument("--eval_every", type=int, default=1, help="التقييم كل N epochs")
+    adv_group.add_argument("--verbose", action="store_true", default=True, help="عرض تفاصيل إضافية")
 
     return parser.parse_args()
 
 
 args = parse_args()
 
-# ثوابت لضمان التطابق التام مع بنية النموذج
-# ملاحظة: هذه القيم يجب أن تتطابق مع ما يتوقعه OptimizedMiniLLM أو يتم تمريرها له
-LORA_R = 32
-USE_GRAD_CHECKPOINT = True
+# ثوابت النظام
+USE_GRAD_CHECKPOINT = True  # Gradient Checkpointing لتوفير الذاكرة
 
 
 # ============================================================
@@ -361,8 +396,8 @@ model = OptimizedMiniLLM(
     num_layers=args.num_layers,
     max_seq_len=args.block_size,
     use_lora=True,
-    lora_r=LORA_R,
-    use_gradient_checkpoint=USE_GRAD_CHECKPOINT,
+    lora_r=args.lora_r,
+    use_gradient_checkpoint=True,
     dropout=args.dropout
 ).to(device)
 
@@ -507,8 +542,8 @@ def get_model_config():
         'max_seq_len': args.block_size,
         'dropout': args.dropout,
         'use_lora': True,
-        'lora_r': LORA_R,
-        'use_gradient_checkpoint': USE_GRAD_CHECKPOINT,
+        'lora_r': args.lora_r,
+        'use_gradient_checkpoint': True,
         'use_flash_attn': True,
     }
 
