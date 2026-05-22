@@ -41,8 +41,8 @@ class LoRALinear(nn.Module):
             self,
             in_features: int,
             out_features: int,
-            r: int = 32,
-            lora_alpha: int = 64,
+            r: int = 8,
+            lora_alpha: int = 16,
             lora_dropout: float = 0.1
     ):
         super().__init__()
@@ -136,8 +136,20 @@ class FlashAttention(nn.Module):
         self.scale = 1.0 / math.sqrt(self.head_dim)
         self.dropout = dropout
 
-        self.qkv = nn.Linear(d_model, d_model * 3)
-        self.out_proj = nn.Linear(d_model, d_model)
+        self.qkv = LoRALinear(
+            d_model,
+            d_model * 3,
+            r=8,
+            lora_alpha=16,
+            lora_dropout=dropout
+        )
+        self.out_proj = LoRALinear(
+            d_model,
+            d_model,
+            r=8,
+            lora_alpha=16,
+            lora_dropout=dropout
+        )
         self.use_flash = hasattr(F, "scaled_dot_product_attention")
 
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, causal: bool = True) -> torch.Tensor:
@@ -264,7 +276,7 @@ class OptimizedMiniLLM(nn.Module):
             num_layers: int = 16,
             max_seq_len: int = 512,
             use_lora: bool = True,
-            lora_r: int = 32,
+            lora_r: int = 8,
             use_gradient_checkpoint: bool = True,
             dropout: float = 0.1
     ):
@@ -293,11 +305,27 @@ class OptimizedMiniLLM(nn.Module):
 
         # Output Head
         if use_lora:
-            self.lm_head = LoRALinear(d_model, vocab_size, r=lora_r, lora_alpha=lora_r * 2, lora_dropout=dropout)
+            self.lm_head = LoRALinear(d_model, vocab_size, r=lora_r, lora_alpha=lora_r * 16, lora_dropout=dropout)
         else:
             self.lm_head = nn.Linear(d_model, vocab_size)
 
         self.apply(self._init_weights)
+
+        # freeze everything first
+        for param in self.parameters():
+            param.requires_grad = False
+
+        # unfreeze LoRA فقط
+        for module in self.modules():
+            if isinstance(module, LoRALinear):
+                module.lora_A.weight.requires_grad = True
+                module.lora_B.weight.requires_grad = True
+
+        # LayerNorm optional
+        for module in self.modules():
+            if isinstance(module, nn.LayerNorm):
+                for p in module.parameters():
+                    p.requires_grad = True
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -408,7 +436,7 @@ def compare_models():
             n_heads=16,
             num_layers=4,  # عدد قليل للاختبار
             use_lora=True,
-            lora_r=32,
+            lora_r=8,
             use_gradient_checkpoint=True
         ).to(device)
 
