@@ -1,10 +1,1 @@
-```gitignore
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Original rules preserved
-*.log
-```
+Nothing needs to be added to .gitignore since only a Python source file (`tokenizer.py`) was modified and there are no build artifacts, dependencies, or temporary files in the changes.
