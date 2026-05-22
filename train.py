@@ -28,6 +28,7 @@ from model_optimized import OptimizedMiniLLM
 # تجاهل التحذيرات غير الضرورية
 warnings.filterwarnings("ignore")
 
+
 # ============================================================
 # 1. معاملات سطر الأوامر (Fine-tuning Configuration)
 # ============================================================
@@ -39,10 +40,10 @@ def parse_args():
 أمثلة الاستخدام:
   # Fine-tuning أساسي:
   python train.py --data_path data.csv --epochs 3 --batch_size 8
-  
+
   # Fine-tuning مع نموذج مُدرَّب مسبقاً:
-  python train.py --pretrained_path checkpoints/best_model.pth --data_path data.csv --lr 2e-4
-  
+  python train.py --pretrained_path try/best_model.pth --data_path data2.csv --lr 2e-4
+
   # Fine-tuning متقدم مع TPU/MPS:
   python train.py --device mps --mixed_precision false --grad_accum 32
         """
@@ -51,13 +52,13 @@ def parse_args():
     # ==================== Fine-tuning Settings ====================
     ft_group = parser.add_argument_group("🎯 Fine-tuning Configuration")
     ft_group.add_argument("--mode", type=str, choices=["pretrain", "finetune"], default="finetune",
-                         help="وضع التدريب: pretrain (من الصفر) أو finetune (من نموذج موجود)")
+                          help="وضع التدريب: pretrain (من الصفر) أو finetune (من نموذج موجود)")
     ft_group.add_argument("--pretrained_path", type=str, default=None,
-                         help="مسار النموذج المُدرَّب مسبقاً للـ fine-tuning")
+                          help="مسار النموذج المُدرَّب مسبقاً للـ fine-tuning")
     ft_group.add_argument("--freeze_base", action="store_true", default=True,
-                         help="تجميد الطبقات الأساسية واستخدام LoRA فقط (مفعّل افتراضياً)")
+                          help="تجميد الطبقات الأساسية واستخدام LoRA فقط (مفعّل افتراضياً)")
     ft_group.add_argument("--unfreeze_layers", type=int, default=0,
-                         help="عدد الطبقات الأخيرة لفك التجميد عنها (0 = كلها مجمدة)")
+                          help="عدد الطبقات الأخيرة لفك التجميد عنها (0 = كلها مجمدة)")
 
     # ==================== Training Hyperparameters ====================
     train_group = parser.add_argument_group("📈 Training Hyperparameters")
@@ -84,18 +85,19 @@ def parse_args():
 
     # ==================== Paths & Checkpoints ====================
     path_group = parser.add_argument_group("📁 Paths & Storage")
-    path_group.add_argument("--output_dir", type=str, default="checkpoints", help="مجلد حفظ النماذج")
-    path_group.add_argument("--tokenizer_path", type=str, default="my_tokenizer", help="مسار الـ tokenizer")
+    path_group.add_argument("--output_dir", type=str, default="try", help="مجلد حفظ النماذج")
+    path_group.add_argument("--tokenizer_path", type=str, default="tokenizer.py", help="مسار الـ tokenizer")
     path_group.add_argument("--data_path", type=str, default="data.csv", help="مسار بيانات التدريب")
     path_group.add_argument("--log_dir", type=str, default="logs", help="مجلد السجلات")
+    parser.add_argument("--checkpoint_dir", type=str, default="try", help="مجلد الـ try")
 
     # ==================== Advanced Options ====================
     adv_group = parser.add_argument_group("⚙️  Advanced Options")
-    adv_group.add_argument("--device", type=str, default="auto", 
-                          choices=["auto", "cuda", "cpu", "mps", "xpu"],
-                          help="الجهاز المستخدم (auto للاختيار التلقائي)")
+    adv_group.add_argument("--device", type=str, default="auto",
+                           choices=["auto", "cuda", "cpu", "mps", "xpu"],
+                           help="الجهاز المستخدم (auto للاختيار التلقائي)")
     adv_group.add_argument("--mixed_precision", action="store_true", default=True,
-                          help="تفعيل Mixed Precision (AMP) لتسريع التدريب")
+                           help="تفعيل Mixed Precision (AMP) لتسريع التدريب")
     adv_group.add_argument("--gradient_clip", type=float, default=1.0, help="قيمة قص التدرجات")
     val_group = adv_group.add_mutually_exclusive_group()
     val_group.add_argument("--val_split", type=float, default=0.1, help="نسبة بيانات التحقق")
@@ -401,6 +403,71 @@ model = OptimizedMiniLLM(
     dropout=args.dropout
 ).to(device)
 
+# ============================================================
+# تحميل النموذج المسبق
+# ============================================================
+if args.pretrained_path is not None:
+
+    if os.path.exists(args.pretrained_path):
+
+        print(f"📥 تحميل النموذج: {args.pretrained_path}")
+
+        checkpoint = torch.load(
+            args.pretrained_path,
+            map_location=device
+        )
+
+        # checkpoint dictionary
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+
+            missing, unexpected = model.load_state_dict(
+                checkpoint["model_state_dict"],
+                strict=False
+            )
+
+            print("Missing keys:", missing)
+            print("Unexpected keys:", unexpected)
+
+        else:
+            model.load_state_dict(
+                checkpoint,
+                strict=False
+            )
+
+        print("✅ تم تحميل النموذج المسبق بنجاح")
+
+    else:
+        print(f"❌ الملف غير موجود: {args.pretrained_path}")
+
+# ============================================================
+# Freeze Base Model (True LoRA Fine-tuning)
+# ============================================================
+if args.freeze_base:
+    print("🧊 تجميد الطبقات الأساسية...")
+
+    # تجميد كل شيء أولاً
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # فتح طبقات LoRA فقط
+    trainable_count = 0
+
+    for name, param in model.named_parameters():
+
+        # عدل الأسماء حسب implementation عندك
+        if "lora" in name.lower():
+            param.requires_grad = True
+            trainable_count += param.numel()
+
+    print(f"✅ LoRA Trainable Params: {trainable_count:,}")
+
+print("\n📊 Trainable Parameters:\n")
+
+for name, param in model.named_parameters():
+
+    if param.requires_grad:
+        print(f"✅ {name} | {param.numel():,}")
+
 total_params = model.get_total_params_count()
 trainable_params = model.get_trainable_params_count()
 
@@ -446,8 +513,13 @@ def masked_cross_entropy(logits, targets, mask, label_smoothing=0.0):
 # ============================================================
 print("⚙️  إعداد التحسين...")
 
+trainable_params = [
+    p for p in model.parameters()
+    if p.requires_grad
+]
+
 optimizer = torch.optim.AdamW(
-    model.parameters(),
+    trainable_params,
     lr=args.lr,
     betas=(0.9, 0.95),
     weight_decay=args.weight_decay,
@@ -488,10 +560,10 @@ early_stop_counter = 0
 
 latest_ckpt_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
 
-if args.resume and os.path.exists(latest_ckpt_path):
+if args.resume and os.path.exists(args.resume):
     print("📌 استئناف التدريب...")
     try:
-        ckpt = torch.load(latest_ckpt_path, map_location=device)
+        ckpt = torch.load(args.resume, map_location=device)
         model.load_state_dict(ckpt['model_state_dict'])
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
         scheduler.load_state_dict(ckpt['scheduler_state_dict'])
@@ -583,6 +655,7 @@ for epoch in range(start_epoch, args.epochs):
                 logits = model(x)
                 loss = masked_cross_entropy(logits, y, mask, args.label_smoothing)
 
+            loss = loss / args.grad_accum
             scaler.scale(loss).backward()
 
             if (step + 1) % args.grad_accum == 0:
