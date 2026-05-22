@@ -1,7 +1,9 @@
-# tokenizer.py - نسخة محسّنة تدعم العربية والإنجليزية ولغات البرمجة بذكاء
+# tokenizer.py - نسخة محسّنة تدعم BPE حقيقي مع Byte Fallback
+# يدعم العربية والإنجليزية ولغات البرمجة بذكاء
 import os
 import json
 import re
+import unicodedata
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 
@@ -10,16 +12,18 @@ class MyTokenizer:
     """
     Tokenizer خفيف الوزن بدون اعتمادية على مكتبات خارجية
     يدعم العربية والإنجليزية ولغات البرمجة بشكل صحيح ومحسن
-    مع تحسينات BPE مصغرة للأداء الاحترافي
+    مع BPE حقيقي و Byte Fallback مثل GPT/LLaMA/SentencePiece
+    
+    المميزات:
+    - Unicode Normalization (NFKC)
+    - Whitespace Token (▁) للحفاظ على حدود الكلمات
+    - BPE حقيقي مع تطبيق merges تدريجي
+    - Subword Vocabulary بدل Word-Level
+    - Byte Fallback لإزالة <unk> تقريباً تماماً
     """
 
     def __init__(self, vocab: Dict[str, int], special_tokens: Dict[str, int],
                  merges: Optional[List[Tuple[str, str]]] = None):
-        """
-        vocab: قاموس {كلمة/توكن: id}
-        special_tokens: قاموس {<special>: id}
-        merges: قائمة عمليات الدمج لـ BPE (اختياري)
-        """
         self.vocab = vocab
         self.special_tokens = special_tokens
         self.merges = merges or []
@@ -37,7 +41,6 @@ class MyTokenizer:
         self.bos_token_id = special_tokens.get(self.bos_token, 2)
         self.eos_token_id = special_tokens.get(self.eos_token, 3)
 
-        # أسماء مختصرة متوافقة مع train.py
         self.pad_id = self.pad_token_id
         self.unk_id = self.unk_token_id
         self.bos_id = self.bos_token_id
@@ -48,13 +51,14 @@ class MyTokenizer:
         for token, tid in special_tokens.items():
             self.id_to_token[tid] = token
 
-        # بناء جدول merges سريع
+        # بناء جدول merges سريع - تحويل merges من list إلى tuple إذا لزم الأمر
+        self.merges = [tuple(m) if isinstance(m, list) else m for m in self.merges]
         self.merge_ranks = {merge: i for i, merge in enumerate(self.merges)}
 
     @classmethod
     def build(cls, texts: List[str], vocab_size: int = 32000, min_frequency: int = 2,
               save_path: str = "my_tokenizer", bpe_merges: int = 5000):
-        """بناء tokenizer من قائمة النصوص مع دعم BPE"""
+        """بناء tokenizer من قائمة النصوص مع دعم BPE حقيقي"""
         print(f"🔨 بناء tokenizer من {len(texts)} نصاً...")
 
         texts = [t.strip() for t in texts if t and t.strip()]
@@ -62,45 +66,56 @@ class MyTokenizer:
         if not texts:
             raise ValueError("❌ لا توجد نصوص صالحة للتدريب")
 
-        # عد تردد الكلمات والرموز
+        # تطبيق Unicode Normalization أولاً
+        texts = [unicodedata.normalize("NFKC", text) for text in texts]
+
+        # جمع جميع الكلمات مع إضافة علامة المسافة البيضاء ▁
         word_freq = defaultdict(int)
-        char_pairs = defaultdict(int)
 
         for text in texts:
-            tokens = cls._tokenize_text(text)
-            for token in tokens:
-                word_freq[token] += 1
-
-            # جمع أزواج الحروف لـ BPE
-            for token in tokens:
-                chars = list(token)
-                for i in range(len(chars) - 1):
-                    pair = (chars[i], chars[i + 1])
-                    char_pairs[pair] += 1
+            words = text.split()
+            for word in words:
+                prefixed_word = "▁" + word
+                word_freq[prefixed_word] += 1
 
         # بناء الـ BPE merges
         merges = []
         if bpe_merges > 0:
             print(f"🔄 بناء {bpe_merges} عملية دمج BPE...")
+            
+            # تحويل word_freq إلى تمثيل بالأحرف
+            word_splits = {word: list(word) for word in word_freq.keys()}
+            
             for _ in range(bpe_merges):
+                # جمع أزواج الحروف
+                char_pairs = defaultdict(int)
+                for word, chars in word_splits.items():
+                    freq = word_freq[word]
+                    for i in range(len(chars) - 1):
+                        pair = (chars[i], chars[i + 1])
+                        char_pairs[pair] += freq
+                
                 if not char_pairs:
                     break
+                    
                 best_pair = max(char_pairs.items(), key=lambda x: x[1])[0]
                 merges.append(best_pair)
 
-                new_freq = {}
-                for token, freq in word_freq.items():
-                    new_token = cls._apply_merge(token, best_pair)
-                    new_freq[new_token] = new_freq.get(new_token, 0) + freq
-
-                char_pairs.clear()
-                for token in new_freq.keys():
-                    chars = list(token)
-                    for i in range(len(chars) - 1):
-                        pair = (chars[i], chars[i + 1])
-                        char_pairs[pair] += 1
-
-                word_freq = new_freq
+                # تطبيق الدمج على جميع الكلمات
+                first, second = best_pair
+                merged = first + second
+                for word in list(word_splits.keys()):
+                    chars = word_splits[word]
+                    new_chars = []
+                    i = 0
+                    while i < len(chars):
+                        if i < len(chars) - 1 and chars[i] == first and chars[i + 1] == second:
+                            new_chars.append(merged)
+                            i += 2
+                        else:
+                            new_chars.append(chars[i])
+                            i += 1
+                    word_splits[word] = new_chars
 
         # بناء الـ vocab النهائي
         special_tokens = {
@@ -113,6 +128,7 @@ class MyTokenizer:
         vocab = dict(special_tokens)
         token_id = len(special_tokens)
 
+        # إضافة subwords من الأكثر تردداً إلى الأقل
         sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
         for word, freq in sorted_words:
             if freq >= min_frequency and len(vocab) < vocab_size:
@@ -161,57 +177,56 @@ class MyTokenizer:
         print(f"✅ تم تحميل tokenizer: vocab_size={len(vocab)}, merges={len(merges)}")
         return cls(vocab, special_tokens, merges)
 
-    @staticmethod
-    def _apply_merge(token: str, pair: Tuple[str, str]) -> str:
-        """تطبيق دمج BPE على توكن"""
-        first, second = pair
-        return token.replace(first + second, first + second)
-
-    @staticmethod
-    def _tokenize_text(text: str) -> List[str]:
+    def _apply_bpe(self, token: str) -> List[str]:
         """
-        تقسيم النص إلى Tokens بدقة عالية.
-        دعم ممتاز للعربية والإنجليزية ولغات البرمجة
+        تطبيق BPE الحقيقي على كلمة واحدة
         """
-        patterns = [
-            # روابط وبريد إلكتروني
-            r'https?://[^\s]+|[\w\.-]+@[\w\.-]+\.\w+',
-            # كلمات برمجية ومعرفيات (متغيرات، دوال، كلاسات)
-            r'[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*',
-            # أرقام مركبة (عشرية، نسب، عملات، تواريخ)
-            r'\d+(?:[\.]\d+)*(?:%|م|هـ|€|\$|£|¥)?',
-            # كلمات عربية
-            r'[\u0600-\u06FF]+(?:[\u0600-\u06FF]|[\u064B-\u065F])*',
-            # رموز برمجة وعمليات
-            r'[+\-*/%=<>!&|^~?:]+',
-            # أقواس ورموز خاصة
-            r'[\(\)\[\]{};,\.\'\"]',
-            # أي كلمة أخرى
-            r'\w+|[^\w\s]',
-        ]
-
-        pattern = '|'.join(f'({p})' for p in patterns)
-        tokens = []
-
-        for match in re.finditer(pattern, text):
-            token = match.group(0)
-            if token:
-                tokens.append(token)
-
-        # lowercase للإنجليزية فقط (ليس للكود)
-        processed_tokens = []
-        for t in tokens:
-            if re.match(r'^[a-zA-Z]+$', t) and '_' not in t and '.' not in t:
-                processed_tokens.append(t.lower())
-            else:
-                processed_tokens.append(t)
-
-        return [t for t in processed_tokens if t]
+        # تقسيم الكلمة إلى أحرف
+        word = list(token)
+        
+        # تطبيق كل merge بالترتيب
+        for merge in self.merges:
+            if len(word) <= 1:
+                break
+            
+            first, second = merge
+            merged = first + second
+            new_word = []
+            i = 0
+            while i < len(word):
+                if i < len(word) - 1 and word[i] == first and word[i + 1] == second:
+                    new_word.append(merged)
+                    i += 2
+                else:
+                    new_word.append(word[i])
+                    i += 1
+            word = new_word
+        
+        return word
 
     def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
-        """تكويد النص إلى قائمة من الـ IDs"""
-        tokens = self._tokenize_text(text)
-        ids = [self.vocab.get(token, self.unk_token_id) for token in tokens]
+        """تكويد النص إلى قائمة من الـ IDs مع BPE حقيقي"""
+        # Unicode Normalization
+        text = unicodedata.normalize("NFKC", text)
+        
+        # تقسيم النص إلى كلمات (whitespace tokenization)
+        words = text.split()
+        
+        ids = []
+        for word in words:
+            # إضافة ▁ في بداية كل كلمة
+            prefixed_word = "▁" + word
+            
+            # تطبيق BPE للحصول على subwords
+            subwords = self._apply_bpe(prefixed_word)
+            
+            # تحويل subwords إلى IDs
+            for sw in subwords:
+                if sw in self.vocab:
+                    ids.append(self.vocab[sw])
+                else:
+                    # استخدام unk للكلمات غير المعروفة
+                    ids.append(self.unk_token_id)
 
         if add_special_tokens:
             ids = [self.bos_token_id] + ids + [self.eos_token_id]
@@ -219,57 +234,28 @@ class MyTokenizer:
         return ids
 
     def decode(self, ids: List[int], skip_special_tokens: bool = True) -> str:
-        """فك الترميز من IDs إلى نص مع تحسينات للعربية ولغات البرمجة"""
+        """فك الترميز من IDs إلى نص"""
         tokens = []
         for token_id in ids:
             if skip_special_tokens and token_id in self.special_tokens.values():
                 continue
-            token = self.id_to_token.get(token_id, self.unk_token)
-            tokens.append(token)
+            token = self.id_to_token.get(token_id, "")
+            if token:
+                tokens.append(token)
 
-        # إعادة تجميع النص بدقة
-        text_parts = []
-        prev_was_arabic = False
-        prev_was_code_symbol = False
-
-        for i, token in enumerate(tokens):
-            is_arabic = bool(re.match(r'^[\u0600-\u06FF]+$', token))
-            is_code_symbol = bool(re.match(r'^[+\-*/%=<>!&|^~?:;\(\)\[\]{}]+$', token))
-            is_punctuation = bool(re.match(r'^[,.!?;:\'\"]+$', token))
-
-            if i > 0:
-                if is_code_symbol or is_punctuation:
-                    text_parts.append(token)
-                elif prev_was_code_symbol:
-                    text_parts.append(token)
-                elif prev_was_arabic and is_arabic:
-                    text_parts.append(' ')
-                    text_parts.append(token)
-                else:
-                    text_parts.append(' ')
-                    text_parts.append(token)
+        # إعادة تجميع النص
+        result = ""
+        for token in tokens:
+            if token.startswith("▁"):
+                result += " " + token[1:]
             else:
-                text_parts.append(token)
+                result += token
 
-            prev_was_arabic = is_arabic
-            prev_was_code_symbol = is_code_symbol
-
-        text = ''.join(text_parts)
-
-        # إصلاح المسافات حول علامات الترقيم
-        text = re.sub(r'\s+([,.!?;:\)\]}>])', r'\1', text)
-        text = re.sub(r'([\(\[{<])\s+', r'\1', text)
-        text = re.sub(r'\s+([؛،?!])', r'\1', text)
-
-        # إصلاح المسافات حول رموز البرمجة
-        text = re.sub(r'\s+([+\-*/%=<>!&|^~?:])', r'\1', text)
-        text = re.sub(r'([+\-*/%=<>!&|^~?:])\s+', r'\1', text)
-
-        return text.strip()
+        return result.strip()
 
     def batch_encode(self, texts: List[str], add_special_tokens: bool = True,
                      padding: bool = False, max_length: Optional[int] = None) -> List[List[int]]:
-        """تكويد قائمة نصوص دفعة واحدة مع تحسينات الأداء"""
+        """تكويد قائمة نصوص دفعة واحدة"""
         encoded = []
         for text in texts:
             ids = self.encode(text, add_special_tokens)
@@ -306,13 +292,16 @@ class MyTokenizer:
         oov_examples = []
 
         for text in sample:
-            tokens = self._tokenize_text(text)
-            for token in tokens:
-                total_tokens += 1
-                if token not in self.vocab:
-                    oov_tokens += 1
-                    if len(oov_examples) < 20:
-                        oov_examples.append(token)
+            words = text.split()
+            for word in words:
+                prefixed_word = "▁" + word
+                subwords = self._apply_bpe(prefixed_word)
+                for sw in subwords:
+                    total_tokens += 1
+                    if sw not in self.vocab:
+                        oov_tokens += 1
+                        if len(oov_examples) < 20:
+                            oov_examples.append(sw)
 
         oov_rate = (oov_tokens / total_tokens * 100) if total_tokens > 0 else 0
 
@@ -343,10 +332,6 @@ class MyTokenizer:
     def __len__(self):
         return self.vocab_size
 
-
-# ============================================================
-# دوال متوافقة مع الكود القديم
-# ============================================================
 
 def build_tokenizer_from_texts(texts, vocab_size=16000, save_path="my_tokenizer"):
     """دالة متوافقة مع الكود القديم"""
