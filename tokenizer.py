@@ -13,7 +13,8 @@ class MyTokenizer:
     مع تحسينات BPE مصغرة للأداء الاحترافي
     """
 
-    def __init__(self, vocab: Dict[str, int], special_tokens: Dict[str, int], merges: Optional[List[Tuple[str, str]]] = None):
+    def __init__(self, vocab: Dict[str, int], special_tokens: Dict[str, int],
+                 merges: Optional[List[Tuple[str, str]]] = None):
         """
         vocab: قاموس {كلمة/توكن: id}
         special_tokens: قاموس {<special>: id}
@@ -51,7 +52,7 @@ class MyTokenizer:
         self.merge_ranks = {merge: i for i, merge in enumerate(self.merges)}
 
     @classmethod
-    def build(cls, texts: List[str], vocab_size: int = 32000, min_frequency: int = 2, 
+    def build(cls, texts: List[str], vocab_size: int = 32000, min_frequency: int = 2,
               save_path: str = "my_tokenizer", bpe_merges: int = 5000):
         """بناء tokenizer من قائمة النصوص مع دعم BPE"""
         print(f"🔨 بناء tokenizer من {len(texts)} نصاً...")
@@ -64,17 +65,17 @@ class MyTokenizer:
         # عد تردد الكلمات والرموز
         word_freq = defaultdict(int)
         char_pairs = defaultdict(int)
-        
+
         for text in texts:
             tokens = cls._tokenize_text(text)
             for token in tokens:
                 word_freq[token] += 1
-            
+
             # جمع أزواج الحروف لـ BPE
             for token in tokens:
                 chars = list(token)
                 for i in range(len(chars) - 1):
-                    pair = (chars[i], chars[i+1])
+                    pair = (chars[i], chars[i + 1])
                     char_pairs[pair] += 1
 
         # بناء الـ BPE merges
@@ -86,19 +87,19 @@ class MyTokenizer:
                     break
                 best_pair = max(char_pairs.items(), key=lambda x: x[1])[0]
                 merges.append(best_pair)
-                
+
                 new_freq = {}
                 for token, freq in word_freq.items():
                     new_token = cls._apply_merge(token, best_pair)
                     new_freq[new_token] = new_freq.get(new_token, 0) + freq
-                
+
                 char_pairs.clear()
                 for token in new_freq.keys():
                     chars = list(token)
                     for i in range(len(chars) - 1):
-                        pair = (chars[i], chars[i+1])
+                        pair = (chars[i], chars[i + 1])
                         char_pairs[pair] += 1
-                
+
                 word_freq = new_freq
 
         # بناء الـ vocab النهائي
@@ -129,7 +130,7 @@ class MyTokenizer:
 
         with open(os.path.join(save_path, "special_tokens.json"), "w", encoding="utf-8") as f:
             json.dump(special_tokens, f, ensure_ascii=False, indent=2)
-        
+
         with open(os.path.join(save_path, "merges.json"), "w", encoding="utf-8") as f:
             json.dump(merges, f, ensure_ascii=False, indent=2)
 
@@ -151,7 +152,7 @@ class MyTokenizer:
 
         with open(special_path, "r", encoding="utf-8") as f:
             special_tokens = json.load(f)
-        
+
         merges = []
         if os.path.exists(merges_path):
             with open(merges_path, "r", encoding="utf-8") as f:
@@ -165,7 +166,7 @@ class MyTokenizer:
         """تطبيق دمج BPE على توكن"""
         first, second = pair
         return token.replace(first + second, first + second)
-    
+
     @staticmethod
     def _tokenize_text(text: str) -> List[str]:
         """
@@ -188,10 +189,10 @@ class MyTokenizer:
             # أي كلمة أخرى
             r'\w+|[^\w\s]',
         ]
-        
+
         pattern = '|'.join(f'({p})' for p in patterns)
         tokens = []
-        
+
         for match in re.finditer(pattern, text):
             token = match.group(0)
             if token:
@@ -230,12 +231,12 @@ class MyTokenizer:
         text_parts = []
         prev_was_arabic = False
         prev_was_code_symbol = False
-        
+
         for i, token in enumerate(tokens):
             is_arabic = bool(re.match(r'^[\u0600-\u06FF]+$', token))
             is_code_symbol = bool(re.match(r'^[+\-*/%=<>!&|^~?:;\(\)\[\]{}]+$', token))
             is_punctuation = bool(re.match(r'^[,.!?;:\'\"]+$', token))
-            
+
             if i > 0:
                 if is_code_symbol or is_punctuation:
                     text_parts.append(token)
@@ -249,7 +250,7 @@ class MyTokenizer:
                     text_parts.append(token)
             else:
                 text_parts.append(token)
-            
+
             prev_was_arabic = is_arabic
             prev_was_code_symbol = is_code_symbol
 
@@ -259,35 +260,35 @@ class MyTokenizer:
         text = re.sub(r'\s+([,.!?;:\)\]}>])', r'\1', text)
         text = re.sub(r'([\(\[{<])\s+', r'\1', text)
         text = re.sub(r'\s+([؛،?!])', r'\1', text)
-        
+
         # إصلاح المسافات حول رموز البرمجة
         text = re.sub(r'\s+([+\-*/%=<>!&|^~?:])', r'\1', text)
         text = re.sub(r'([+\-*/%=<>!&|^~?:])\s+', r'\1', text)
 
         return text.strip()
 
-    def batch_encode(self, texts: List[str], add_special_tokens: bool = True, 
+    def batch_encode(self, texts: List[str], add_special_tokens: bool = True,
                      padding: bool = False, max_length: Optional[int] = None) -> List[List[int]]:
         """تكويد قائمة نصوص دفعة واحدة مع تحسينات الأداء"""
         encoded = []
         for text in texts:
             ids = self.encode(text, add_special_tokens)
-            
+
             if max_length and len(ids) > max_length:
                 ids = ids[:max_length]
-            
+
             encoded.append(ids)
-        
+
         if padding and encoded:
             max_len = max(len(seq) for seq in encoded)
             if max_length:
                 max_len = min(max_len, max_length)
-            
+
             for i, seq in enumerate(encoded):
                 pad_length = max_len - len(seq)
                 if pad_length > 0:
                     encoded[i] = seq + [self.pad_token_id] * pad_length
-        
+
         return encoded
 
     def batch_decode(self, list_ids: List[List[int]], skip_special_tokens: bool = True) -> List[str]:
@@ -298,12 +299,12 @@ class MyTokenizer:
         """فحص جودة التوكنيزر وحساب نسبة OOV"""
         if not texts:
             return {"error": "لا توجد نصوص للتحقق"}
-        
+
         sample = texts[:sample_size] if len(texts) > sample_size else texts
         total_tokens = 0
         oov_tokens = 0
         oov_examples = []
-        
+
         for text in sample:
             tokens = self._tokenize_text(text)
             for token in tokens:
@@ -312,9 +313,9 @@ class MyTokenizer:
                     oov_tokens += 1
                     if len(oov_examples) < 20:
                         oov_examples.append(token)
-        
+
         oov_rate = (oov_tokens / total_tokens * 100) if total_tokens > 0 else 0
-        
+
         return {
             "total_tokens": total_tokens,
             "oov_tokens": oov_tokens,
@@ -333,7 +334,7 @@ class MyTokenizer:
 
         with open(os.path.join(save_path, "special_tokens.json"), "w", encoding="utf-8") as f:
             json.dump(self.special_tokens, f, ensure_ascii=False, indent=2)
-        
+
         with open(os.path.join(save_path, "merges.json"), "w", encoding="utf-8") as f:
             json.dump(self.merges, f, ensure_ascii=False, indent=2)
 
