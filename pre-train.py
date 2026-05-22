@@ -17,21 +17,6 @@ from torch.utils.tensorboard import SummaryWriter
 # استيراد النموذج المحسن
 from model_optimized import OptimizedMiniLLM
 
-# ملاحظة: تأكد من وجود ملفات tokenizer.py, memory.py, brain.py أو علق الأسطر التالية إذا لم تكن ضرورية للتدريب الأساسي
-try:
-    from tokenizer import MyTokenizer
-except ImportError:
-    print("⚠️  لم يتم العثور على tokenizer.py، سيتم استخدام فئة وهمية أو يجب توفيرها.")
-
-
-    # فئة وهمية للضرورة فقط إذا كان الملف مفقوداً (للغرض التجريبي)
-    class MyTokenizer:
-        @staticmethod
-        def load(path): return None
-
-        @staticmethod
-        def build(*args, **kwargs): return None
-
 warnings.filterwarnings("ignore")
 
 
@@ -43,10 +28,10 @@ def parse_args():
 
     # معاملات التدريب الأساسية
     parser.add_argument("--epochs", type=int, default=1, help="عدد الحقبات")
-    parser.add_argument("--batch_size", type=int, default=4, help="حجم الدفعة")
+    parser.add_argument("--batch_size", type=int, default=1, help="حجم الدفعة")
     parser.add_argument("--lr", type=float, default=5e-4, help="معدل التعلم")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="تحلل الأوزان")
-    parser.add_argument("--grad_accum", type=int, default=16, help="تجميع التدرجات")
+    parser.add_argument("--grad_accum", type=int, default=8, help="تجميع التدرجات")
     parser.add_argument("--patience", type=int, default=10, help="صبر Early Stopping")
     parser.add_argument("--label_smoothing", type=float, default=0.1, help="تمويه التسمية")
 
@@ -78,7 +63,7 @@ args = parse_args()
 
 # ثوابت لضمان التطابق التام مع بنية النموذج
 # ملاحظة: هذه القيم يجب أن تتطابق مع ما يتوقعه OptimizedMiniLLM أو يتم تمريرها له
-LORA_R = 32
+LORA_R = 8
 USE_GRAD_CHECKPOINT = True
 
 
@@ -88,7 +73,7 @@ USE_GRAD_CHECKPOINT = True
 def setup_device():
     """إعداد الجهاز والإعدادات الأمثل"""
     if torch.cuda.is_available():
-        device = "cpu"
+        device = "cuda"
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -129,7 +114,7 @@ tokenizer = None
 # في البيئة الحقيقية، استخدم الكود الأصلي الخاص بك
 class SimpleTokenizer:
     def __init__(self):
-        self.vocab_size = 16000
+        self.vocab_size = 64000
         self.pad_token_id = 0
         self.bos_token_id = 1
         self.eos_id = 2
@@ -225,13 +210,10 @@ def build_sequence(text: str):
     ids = tokenizer.encode(text, add_special_tokens=True)
 
     # لازم يكون عندنا تسلسل طويل كفاية
-    if len(ids) < 2:
+    if len(ids) < 8:
         return None
 
-    # إنشاء mask بنفس طول التسلسل (كل القيم 1 للنصوص الصالحة)
-    mask = [1] * len(ids)
-
-    return ids, mask
+    return ids
 
 # بناء البيانات
 train_pairs = []
@@ -275,60 +257,42 @@ if len(train_pairs) == 0 or len(val_pairs) == 0:
 # ============================================================
 class TextDataset(Dataset):
     def __init__(self, pairs):
-        self.pairs = pairs
+        self.pairs = pairs   # pairs هي قائمة من قوائم الأرقام (ids)
 
     def __len__(self):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        ids, mask = self.pairs[idx]
-        return torch.tensor(ids, dtype=torch.long), torch.tensor(mask, dtype=torch.float32)
+        ids = self.pairs[idx]  # ids هي قائمة الأرقام
+        return torch.tensor(ids, dtype=torch.long)
 
 
 def collate_fn(batch, block_size, pad_id):
-    """دمج الدفعات مع padding ذكي وقص آمن"""
-    # تحديد الطول الأقصى في هذه الدفعة (مع احترام الحد الأقصى للنموذج)
-    max_len = min(max(len(ids) for ids, _ in batch), block_size)
+    # batch: list of torch.tensor, each of shape (seq_len_i,)
+    max_len = min(max(len(ids) for ids in batch), block_size)
+    if max_len < 2:
+        max_len = 2  # لتجنب أي مشكلة لاحقاً
 
-    # ضمان أن الطول لا يقل عن 1
-    if max_len < 1: max_len = 1
-
-    padded_ids, targets, target_masks = [], [], []
-
-    for ids, mask in batch:
-        # تحويل tensors إلى lists إذا لزم الأمر
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(mask, torch.Tensor):
-            mask = mask.tolist()
-
-        # قص إذا تجاوز الطول الأقصى
-        if len(ids) > max_len:
-            ids = ids[:max_len]
-            mask = mask[:max_len]
-
-        # Padding
+    padded_batch = []
+    for ids in batch:
+        ids = ids[:max_len]  # قص إلى max_len
         pad_len = max_len - len(ids)
-        ids_padded = ids + [pad_id] * pad_len
-        mask_padded = mask + [0] * pad_len
+        # تحويل إلى قائمة لو كان tensor، ثم إضافة padding
+        ids_list = ids.tolist() if torch.is_tensor(ids) else ids
+        padded_batch.append(ids_list + [pad_id] * pad_len)
 
-        # Input/Target split
-        # Input: [BOS, prompt, answer_part...] (بدون آخر عنصر)
-        # Target: [prompt, answer..., EOS] (بدون أول عنصر)
-        x = ids_padded[:-1]
-        y = ids_padded[1:]
-        m = mask_padded[1:]  # الـ Mask يتبع الـ Target
+    # تحويل إلى tensor دفعة واحدة
+    padded_tensor = torch.tensor(padded_batch, dtype=torch.long)  # shape: (B, T)
 
-        padded_ids.append(x)
-        targets.append(y)
-        target_masks.append(m)
+    # بناء mask: 1 للرموز الحقيقية، 0 للـ padding
+    mask = (padded_tensor != pad_id).float()  # (B, T)
 
-    return (
-        torch.tensor(padded_ids, dtype=torch.long),
-        torch.tensor(targets, dtype=torch.long),
-        torch.tensor(target_masks, dtype=torch.float32)
-    )
+    # تقسيم إلى x (input) و y (target) و mask الخاص بـ y
+    x = padded_tensor[:, :-1]  # (B, T-1)
+    y = padded_tensor[:, 1:]  # (B, T-1)
+    mask = mask[:, 1:]  # (B, T-1)
 
+    return x, y, mask
 
 # إنشاء Datasets و Loaders
 train_dataset = TextDataset(train_pairs)
